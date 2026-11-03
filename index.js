@@ -48,6 +48,68 @@ app.post("/add-book", async (req, res) => {
   }
 });
 
+app.patch('/all-books/:id', async (req, res) => {
+  if (!databaseReady || !client) {
+    return res.status(503).json({ error: 'Book storage is unavailable' });
+  }
+  if (!/^[a-f0-9]{24}$/i.test(req.params.id)) {
+    return res.status(400).json({ error: 'A valid book ID is required' });
+  }
+  const fields = ['title', 'author', 'category', 'image', 'description'];
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body) ||
+      fields.some((field) => typeof body[field] !== 'string' || !body[field].trim()) ||
+      !Number.isSafeInteger(body.totalCopies) || body.totalCopies < 0) {
+    return res.status(400).json({ error: 'All book fields and a non-negative whole number of copies are required' });
+  }
+  try {
+    const imageUrl = new URL(body.image.trim());
+    if (!['http:', 'https:'].includes(imageUrl.protocol)) throw new Error('Invalid URL');
+  } catch {
+    return res.status(400).json({ error: 'Book cover must be a valid HTTP or HTTPS URL' });
+  }
+  const updates = Object.fromEntries(fields.map((field) => [field, body[field].trim()]));
+  updates.totalCopies = body.totalCopies;
+  try {
+    const result = await client.db('booknook_db').collection('books').updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: updates },
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: 'Book not found' });
+    return res.status(200).json({ message: 'Book updated', bookId: req.params.id });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Failed to update book' });
+  }
+});
+
+
+app.delete('/all-books/:id', async (req, res) => {
+  if (!databaseReady || !client) {
+    return res.status(503).json({ error: 'Book storage is unavailable' });
+  }
+  const bookId = req.params.id;
+  if (!/^[a-f0-9]{24}$/i.test(bookId)) {
+    return res.status(400).json({ error: 'A valid book ID is required' });
+  }
+  try {
+    const db = client.db('booknook_db');
+    const filter = { _id: new ObjectId(bookId) };
+    const result = await db.collection('books').deleteOne(filter);
+    // Also clean up saved copies, including on retries after a partial failure.
+    await db.collection('my_books').deleteMany(filter);
+    return res.status(200).json({
+      message: result.deletedCount ? 'Book deleted' : 'Book already deleted',
+      bookId,
+      deleted: result.deletedCount > 0,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Failed to delete book. Please try again.' });
+  }
+});
+
+
 app.get("/all-books", async (_req, res) => {
   if (!databaseReady || !client) {
     return res.status(503).json({ error: "Book storage is unavailable" });
