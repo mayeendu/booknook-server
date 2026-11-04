@@ -78,6 +78,31 @@ app.get("/my-bookings/:email", async (req, res) => {
   }
 });
 
+app.delete("/my-bookings/:id", async (req, res) => {
+  if (!databaseReady || !client) {
+    return res.status(503).json({ error: "Book storage is unavailable" });
+  }
+
+  const { id } = req.params;
+  if (!/^[a-f0-9]{24}$/i.test(id)) {
+    return res.status(400).json({ error: "A valid booking ID is required" });
+  }
+
+  try {
+    const result = await client
+      .db("booknook_db")
+      .collection("bookBookings")
+      .deleteOne({ _id: new ObjectId(id) });
+    if (!result.deletedCount) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+    return res.status(200).json({ message: "Booking deleted", id });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Failed to delete booking" });
+  }
+});
+
 app.post("/add-book", async (req, res) => {
   if (!databaseReady || !client) {
     return res.status(503).json({ error: "Book storage is unavailable" });
