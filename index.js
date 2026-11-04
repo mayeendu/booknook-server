@@ -29,86 +29,167 @@ export async function connectToMongoDB() {
   }
 }
 
+// Book Bookings
+// http://localhost:5000/booking
+app.post("/booking", async (req, res) => {
+  if (!databaseReady || !client) {
+    return res.status(503).json({ error: "Book storage is unavailable" });
+  }
+
+  if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+    return res
+      .status(400)
+      .json({ error: "Request body must be a JSON object" });
+  }
+
+  try {
+    const result = await client
+      .db("booknook_db")
+      .collection("bookBookings")
+      .insertOne(req.body);
+    return res.status(201).json(result);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Failed to create booking" });
+  }
+});
+
+// Example: GET /my-bookings/name%40example.com
+app.get("/my-bookings/:email", async (req, res) => {
+  if (!databaseReady || !client) {
+    return res.status(503).json({ error: "Book storage is unavailable" });
+  }
+
+  const { email } = req.params;
+  if (!email?.trim()) {
+    return res.status(400).json({ error: "A valid email is required" });
+  }
+
+  try {
+    const bookings = await client
+      .db("booknook_db")
+      .collection("bookBookings")
+      .find({ email: email.trim() })
+      .toArray();
+    return res.status(200).json(bookings);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Failed to fetch bookings" });
+  }
+});
+
 app.post("/add-book", async (req, res) => {
   if (!databaseReady || !client) {
     return res.status(503).json({ error: "Book storage is unavailable" });
   }
 
   if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
-    return res.status(400).json({ error: "Request body must be a JSON object" });
+    return res
+      .status(400)
+      .json({ error: "Request body must be a JSON object" });
   }
 
   try {
     const db = client.db("booknook_db");
     const result = await db.collection("books").insertOne(req.body);
-    return res.status(201).json({ message: "Book added", id: result.insertedId });
+    return res
+      .status(201)
+      .json({ message: "Book added", id: result.insertedId });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: "Failed to add book" });
   }
 });
 
-app.patch('/all-books/:id', async (req, res) => {
+app.patch("/all-books/:id", async (req, res) => {
   if (!databaseReady || !client) {
-    return res.status(503).json({ error: 'Book storage is unavailable' });
+    return res.status(503).json({ error: "Book storage is unavailable" });
   }
   if (!/^[a-f0-9]{24}$/i.test(req.params.id)) {
-    return res.status(400).json({ error: 'A valid book ID is required' });
+    return res.status(400).json({ error: "A valid book ID is required" });
   }
-  const fields = ['title', 'author', 'category', 'image', 'description'];
+  const fields = ["title", "author", "category", "image", "description"];
   const body = req.body;
-  if (!body || typeof body !== 'object' || Array.isArray(body) ||
-      fields.some((field) => typeof body[field] !== 'string' || !body[field].trim()) ||
-      !Number.isSafeInteger(body.totalCopies) || body.totalCopies < 0) {
-    return res.status(400).json({ error: 'All book fields and a non-negative whole number of copies are required' });
+  if (
+    !body ||
+    typeof body !== "object" ||
+    Array.isArray(body) ||
+    !Object.keys(body).length ||
+    Object.keys(body).some(
+      (field) => !fields.includes(field) && field !== "totalCopies",
+    ) ||
+    fields.some(
+      (field) =>
+        body[field] !== undefined &&
+        (typeof body[field] !== "string" || !body[field].trim()),
+    ) ||
+    (body.totalCopies !== undefined &&
+      (!Number.isSafeInteger(body.totalCopies) || body.totalCopies < 0))
+  ) {
+    return res.status(400).json({
+      error: "Provide valid book fields to update",
+    });
   }
-  try {
-    const imageUrl = new URL(body.image.trim());
-    if (!['http:', 'https:'].includes(imageUrl.protocol)) throw new Error('Invalid URL');
-  } catch {
-    return res.status(400).json({ error: 'Book cover must be a valid HTTP or HTTPS URL' });
+
+  if (body.image !== undefined) {
+    try {
+      const imageUrl = new URL(body.image.trim());
+      if (!["http:", "https:"].includes(imageUrl.protocol))
+        throw new Error("Invalid URL");
+    } catch {
+      return res
+        .status(400)
+        .json({ error: "Book cover must be a valid HTTP or HTTPS URL" });
+    }
   }
-  const updates = Object.fromEntries(fields.map((field) => [field, body[field].trim()]));
-  updates.totalCopies = body.totalCopies;
+  const updates = Object.fromEntries(
+    fields
+      .filter((field) => body[field] !== undefined)
+      .map((field) => [field, body[field].trim()]),
+  );
+  if (body.totalCopies !== undefined) updates.totalCopies = body.totalCopies;
   try {
-    const result = await client.db('booknook_db').collection('books').updateOne(
-      { _id: new ObjectId(req.params.id) },
-      { $set: updates },
-    );
-    if (!result.matchedCount) return res.status(404).json({ error: 'Book not found' });
-    return res.status(200).json({ message: 'Book updated', bookId: req.params.id });
+    const result = await client
+      .db("booknook_db")
+      .collection("books")
+      .updateOne({ _id: new ObjectId(req.params.id) }, { $set: updates });
+    if (!result.matchedCount)
+      return res.status(404).json({ error: "Book not found" });
+    return res
+      .status(200)
+      .json({ message: "Book updated", bookId: req.params.id });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ error: 'Failed to update book' });
+    return res.status(500).json({ error: "Failed to update book" });
   }
 });
 
-
-app.delete('/all-books/:id', async (req, res) => {
+app.delete("/all-books/:id", async (req, res) => {
   if (!databaseReady || !client) {
-    return res.status(503).json({ error: 'Book storage is unavailable' });
+    return res.status(503).json({ error: "Book storage is unavailable" });
   }
   const bookId = req.params.id;
   if (!/^[a-f0-9]{24}$/i.test(bookId)) {
-    return res.status(400).json({ error: 'A valid book ID is required' });
+    return res.status(400).json({ error: "A valid book ID is required" });
   }
   try {
-    const db = client.db('booknook_db');
+    const db = client.db("booknook_db");
     const filter = { _id: new ObjectId(bookId) };
-    const result = await db.collection('books').deleteOne(filter);
+    const result = await db.collection("books").deleteOne(filter);
     // Also clean up saved copies, including on retries after a partial failure.
-    await db.collection('my_books').deleteMany(filter);
+    await db.collection("my_books").deleteMany(filter);
     return res.status(200).json({
-      message: result.deletedCount ? 'Book deleted' : 'Book already deleted',
+      message: result.deletedCount ? "Book deleted" : "Book already deleted",
       bookId,
       deleted: result.deletedCount > 0,
     });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ error: 'Failed to delete book. Please try again.' });
+    return res
+      .status(500)
+      .json({ error: "Failed to delete book. Please try again." });
   }
 });
-
 
 app.get("/all-books", async (_req, res) => {
   if (!databaseReady || !client) {
@@ -122,7 +203,6 @@ app.get("/all-books", async (_req, res) => {
     console.error(error);
     return res.status(500).json({ error: "Failed to fetch books" });
   }
-
 });
 
 app.get("/my-books", async (_req, res) => {
@@ -131,8 +211,12 @@ app.get("/my-books", async (_req, res) => {
   }
 
   try {
-    const books = await client.db("booknook_db").collection("my_books")
-      .find({}).sort({ savedAt: -1 }).toArray();
+    const books = await client
+      .db("booknook_db")
+      .collection("my_books")
+      .find({})
+      .sort({ savedAt: -1 })
+      .toArray();
     return res.status(200).json(books);
   } catch (error) {
     console.error(error);
@@ -152,15 +236,19 @@ app.post("/my-books", async (req, res) => {
 
   try {
     const db = client.db("booknook_db");
-    const book = await db.collection("books").findOne({ _id: new ObjectId(bookId) });
+    const book = await db
+      .collection("books")
+      .findOne({ _id: new ObjectId(bookId) });
     if (!book) return res.status(404).json({ error: "Book not found" });
 
     // Keeping the original book ID makes repeated saves idempotent.
-    const result = await db.collection("my_books").updateOne(
-      { _id: book._id },
-      { $setOnInsert: { ...book, savedAt: new Date() } },
-      { upsert: true },
-    );
+    const result = await db
+      .collection("my_books")
+      .updateOne(
+        { _id: book._id },
+        { $setOnInsert: { ...book, savedAt: new Date() } },
+        { upsert: true },
+      );
     return res.status(result.upsertedCount ? 201 : 200).json({
       message: result.upsertedCount ? "Book saved" : "Book already saved",
       bookId,
@@ -168,35 +256,43 @@ app.post("/my-books", async (req, res) => {
     });
   } catch (error) {
     if (error.code === 11000) {
-      return res.status(200).json({ message: "Book already saved", bookId, alreadySaved: true });
+      return res
+        .status(200)
+        .json({ message: "Book already saved", bookId, alreadySaved: true });
     }
     console.error(error);
     return res.status(500).json({ error: "Failed to save book" });
   }
 });
 
-app.delete('/my-books/:id', async (req, res) => {
+app.delete("/my-books/:id", async (req, res) => {
   if (!databaseReady || !client) {
-    return res.status(503).json({ error: 'Book storage is unavailable' });
+    return res.status(503).json({ error: "Book storage is unavailable" });
   }
 
   const bookId = req.params.id;
   if (!/^[a-f0-9]{24}$/i.test(bookId)) {
-    return res.status(400).json({ error: 'A valid book ID is required' });
+    return res.status(400).json({ error: "A valid book ID is required" });
   }
 
   try {
     // All Books keeps the original; only remove the saved selection.
-    const result = await client.db('booknook_db').collection('my_books')
+    const result = await client
+      .db("booknook_db")
+      .collection("my_books")
       .deleteOne({ _id: new ObjectId(bookId) });
     return res.status(200).json({
-      message: result.deletedCount ? 'Book removed from My Books' : 'Book already removed from My Books',
+      message: result.deletedCount
+        ? "Book removed from My Books"
+        : "Book already removed from My Books",
       bookId,
       removed: result.deletedCount > 0,
     });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ error: 'Failed to remove book from My Books' });
+    return res
+      .status(500)
+      .json({ error: "Failed to remove book from My Books" });
   }
 });
 
@@ -220,5 +316,3 @@ await connectToMongoDB();
 app.listen(PORT, () => {
   console.log(`BookNook server listening on port ${PORT}`);
 });
-
-
