@@ -2,12 +2,30 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 import { MongoClient, ObjectId } from "mongodb";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 const mongoUri = process.env.MONGODB_URI;
 const client = mongoUri ? new MongoClient(mongoUri) : null;
 let databaseReady = false;
+const jwksUrl = new URL(
+  process.env.AUTH_JWKS_URL || "http://localhost:3000/api/auth/jwks",
+);
+const remoteJwks = createRemoteJWKSet(jwksUrl);
+
+const verifyApi = async (req, res, next) => {
+  const authHeader = req.get("authorization");
+  const token = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!token) return res.status(401).json({ error: "Bearer token required" });
+
+  try {
+    await jwtVerify(token, remoteJwks, { algorithms: ["EdDSA"] });
+    return next();
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+};
 
 app.use(cors());
 app.use(express.json());
@@ -54,6 +72,26 @@ app.post("/booking", async (req, res) => {
   }
 });
 
+app.get("/all-books/:id", verifyApi, async (req, res) => {
+  if (!databaseReady || !client) {
+    return res.status(503).json({ error: "Book storage is unavailable" });
+  }
+  const { id } = req.params;
+  if (!/^[a-f0-9]{24}$/i.test(id)) {
+    return res.status(400).json({ error: "A valid book ID is required" });
+  }
+  try {
+    const book = await client
+      .db("booknook_db")
+      .collection("books")
+      .findOne({ _id: new ObjectId(id) });
+    if (!book) return res.status(404).json({ error: "Book not found" });
+    return res.status(200).json(book);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: "Failed to fetch book" });
+  }
+});
 // Example: GET /my-bookings/name%40example.com
 app.get("/my-bookings/:email", async (req, res) => {
   if (!databaseReady || !client) {
