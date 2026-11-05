@@ -10,25 +10,35 @@ const mongoUri = process.env.MONGODB_URI;
 const client = mongoUri ? new MongoClient(mongoUri) : null;
 let databaseReady = false;
 const jwksUrl = new URL(
-  process.env.AUTH_JWKS_URL || "http://localhost:3000/api/auth/jwks",
+  process.env.AUTH_JWKS_URL || `${process.env.CLIENT_URL}/api/auth/jwks`,
 );
 const remoteJwks = createRemoteJWKSet(jwksUrl);
 
 const verifyApi = async (req, res, next) => {
-  const authHeader = req.get("authorization");
+  const authHeader = req.headers.authorization;
   const token = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token) return res.status(401).json({ error: "Bearer token required" });
 
   try {
-    await jwtVerify(token, remoteJwks, { algorithms: ["EdDSA"] });
+    const { payload } = await jwtVerify(token, remoteJwks, {
+      algorithms: ["EdDSA"],
+    });
+    if (typeof payload.sub !== "string" || !payload.sub) {
+      return res.status(401).json({ error: "Token has no user identity" });
+    }
+    req.auth = payload;
     return next();
   } catch {
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 };
 
-app.use(cors());
+app.use(cors({ allowedHeaders: ["Content-Type", "Authorization"] }));
 app.use(express.json());
+app.use((req, res, next) => {
+  if (req.method === "GET" && req.path === "/all-books") return next();
+  return verifyApi(req, res, next);
+});
 
 export async function connectToMongoDB() {
   if (!client) {
@@ -72,7 +82,7 @@ app.post("/booking", async (req, res) => {
   }
 });
 
-app.get("/all-books/:id", verifyApi, async (req, res) => {
+app.get("/all-books/:id", async (req, res) => {
   if (!databaseReady || !client) {
     return res.status(503).json({ error: "Book storage is unavailable" });
   }
@@ -376,6 +386,10 @@ app.use((_req, res) => {
 
 await connectToMongoDB();
 
-app.listen(PORT, () => {
-  console.log(`BookNook server listening on port ${PORT}`);
-});
+export default app;
+
+if (process.env.VERCEL !== '1') {
+  app.listen(PORT, () => {
+    console.log(`BookNook server listening on port ${PORT}`);
+  });
+}
